@@ -1,6 +1,6 @@
 {
     "name": "sdi",
-    "version": "0.1.0",
+    "version": "v0.1.0",
     "description": "Expand GNOME's 2 column tiling and add a Windows-snap-assist-inspired popup...",
     "private": true,
     "homepage": "https://github.com/ochi12/shelled-desktop-icon",
