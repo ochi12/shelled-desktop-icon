@@ -17,40 +17,133 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
-import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-import Gio from 'gi://Gio';
-import Meta from 'gi://Meta';
+import { Extension } from "resource:///org/gnome/shell/extensions/extension.js";
+import * as Main from "resource:///org/gnome/shell/ui/main.js";
+import Gio from "gi://Gio";
+import Meta from "gi://Meta";
+import GLib from "gi://GLib";
 
+class SignalSource {
+  constructor(emitter, signalName, callback) {
+    this._emitter = emitter;
+    this._id = this._emitter.connect(signalName, callback);
+  }
+
+  disconnect() {
+    if (this._emitter && this._id !== null) {
+      try {
+        this._emitter.disconnect(this._id);
+      } catch (_error) {}
+    }
+
+    this._emitter = null;
+    this._id = null;
+  }
+}
+
+const APP_ID = "com.github.ochi12.sdi";
 
 export default class PlainExampleExtension extends Extension {
-    enable() {
-        // Get the absolute path to your sdf.js file inside the extension folder
-        const scriptPath = this.dir.get_child('sdi_desktop_app').get_child('main.js').get_path();
+  enable() {
+    // Get the absolute path to your sdf.js file inside the extension folder
+    const scriptPath = this.dir
+      .get_child("sdi_desktop_app")
+      .get_child("main.js")
+      .get_path();
 
-        Main.overview.connectObject('windows-restacked', () => {
-            global.get_window_actors().forEach(actor => {
-                const mw = actor.meta_window;
-                if (mw && mw.get_gtk_application_id() === 'com.github.ochi12.sdi') {
-                    mw.set_type(Meta.WindowType.DESKTOP);
-                    Main.overview.disconnectObject(this);
-                }
-            });
-        }, this);
+    this._signals = [];
 
+    this._signals.push(
+      new SignalSource(
+        global.display,
+        "window-created",
+        this._onWindowCreated.bind(this),
+      ),
+    );
 
-        this._launcher = new Gio.SubprocessLauncher({
-            flags: Gio.SubprocessFlags.NONE
-        });
+    this._signals.push(
+      new SignalSource(global.display, "workareas-changed", () => {
+        this._updateAppGeometry();
+      }),
+    );
 
-        this._proc = this._launcher.spawnv([scriptPath]);
+    this._proc = null;
 
+    const launch = () => {
+      this._proc = Gio.Subprocess.new(
+        ["gjs", "-m", scriptPath],
+        Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE,
+      );
+    };
+
+    this._signals.push(
+      new SignalSource(Main.layoutManager, "monitors-changed", () => {
+        this._updateAppGeometry();
+      }),
+    );
+
+    this._signals.push(
+      new SignalSource(Main.layoutManager, "startup-complete", () => {
+        launch();
+      }),
+    );
+
+    if (Main.layoutManager._startingUp === false) launch();
+  }
+
+  _onWindowCreated(_display, metaWindow) {
+    const check = () => {
+      if (metaWindow.get_gtk_application_id() !== APP_ID) return;
+
+      this._attachWindow(metaWindow);
+    };
+    metaWindow.connect("notify::get_gtk_application_id", check);
+    metaWindow.connect("shown", check);
+
+    check();
+  }
+
+  _attachWindow(metaWindow) {
+    metaWindow.set_type(Meta.WindowType.DESKTOP);
+    GLib.idle_add(GLib.PRIORITY_LOW, () => {
+      this._updateAppGeometry(metaWindow);
+      return GLib.SOURCE_REMOVE;
+    });
+  }
+
+  _getMetaWindow() {
+    const windows = global
+      .get_window_actors()
+      .map((actor) => actor.meta_window)
+      .filter((win) => win.get_gtk_application_id() === APP_ID);
+    return windows[0];
+  }
+
+  _updateAppGeometry() {
+    const metaWindow = this._getMetaWindow();
+    if (metaWindow === undefined) return;
+
+    const monitor = metaWindow.get_monitor();
+
+    const workspace = metaWindow.get_workspace();
+    const workArea = workspace.get_work_area_for_monitor(monitor);
+
+    metaWindow.move_resize_frame(
+      true,
+      workArea.x,
+      workArea.y,
+      workArea.width,
+      workArea.height,
+    );
+  }
+
+  disable() {
+    if (this._proc !== null) {
+      this._proc.force_exit();
+      this._proc = null;
     }
 
-    disable() {
-        if (this._proc) {
-            this._proc.force_exit();
-            this._proc = null;
-        }
-    }
+    this._signals?.forEach((s) => s.disconnect());
+    this._signals = null;
+  }
 }
