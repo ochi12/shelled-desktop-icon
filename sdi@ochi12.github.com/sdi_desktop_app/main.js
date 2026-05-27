@@ -13,15 +13,14 @@ const SDIWindow = GObject.registerClass(
   {
     GTypeName: "SDIWindow",
   },
-  class SDIWindow extends Adw.ApplicationWindow {
+  class SDIWindow extends Gtk.ApplicationWindow {
     constructor(params = {}) {
       super(params);
       this.add_css_class("transparent-sdi-window");
 
-      const gridManager = new SDIGridManager();
-
-      this.set_content(gridManager.grid);
       this.maximize();
+      const gridManager = new SDIGridManager();
+      this.set_child(gridManager.grid);
     }
   },
 );
@@ -30,7 +29,7 @@ const SDIApplication = GObject.registerClass(
   {
     GTypeName: "SDIApplication",
   },
-  class SDIApplication extends Adw.Application {
+  class SDIApplication extends Gtk.Application {
     constructor() {
       super({
         application_id: "com.github.ochi12.sdi",
@@ -52,7 +51,7 @@ const SDIApplication = GObject.registerClass(
         Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
       );
 
-      let window = new SDIWindow({ application: this });
+      let window = new SDIWindow({ application: this, decorated: false});
       window.present();
     }
   },
