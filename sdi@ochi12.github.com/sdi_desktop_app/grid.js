@@ -11,47 +11,17 @@ import {
 
 import { SDIGlobalMenu } from "./menu.js";
 
-const SDILayoutChild = GObject.registerClass(
-  {
-    GTypeName: "SDILayoutChild",
-    Properties: {
-      index: GObject.ParamSpec.int(
-        "index",
-        "index",
-        "idex",
-        GObject.ParamFlags.READWRITE,
-        -99999,
-        99999,
-        0,
-      ),
+export const DropType = {
+  INVALID: 0,
+  IN_BETWEEN: 1,
+  IN_FOLDER: 2,
+  PLAIN_DROP: 3,
+};
 
-      "column-span": GObject.ParamSpec.int(
-        "columnSpan",
-        "column_span",
-        "columnspan",
-        GObject.ParamFlags.READWRITE,
-        -99999,
-        99999,
-        0,
-      ),
-
-      "row-span": GObject.ParamSpec.int(
-        "rowSpan",
-        "row_span",
-        "rowspan",
-        GObject.ParamFlags.READWRITE,
-        -99999,
-        99999,
-        0,
-      ),
-    },
-  },
-  class SDILayoutChild extends Gtk.LayoutChild {
-    constructor(params) {
-      super(params);
-    }
-  },
-);
+export const AnchorType = {
+  LEFT: 0,
+  RIGHT: 1,
+};
 
 const SDIFreeLayout = GObject.registerClass(
   {
@@ -66,14 +36,8 @@ const SDIFreeLayout = GObject.registerClass(
       this.rowSpacing = 0;
       this.nRows = 0;
       this.nColumns = 0;
+      this.anchorLeftEnd;
       this._placeHolderCell = placeHolderCell;
-    }
-
-    vfunc_create_layout_child(widget, child) {
-      return new SDILayoutChild({
-        layout_manager: this,
-        child_widget: child,
-      });
     }
 
     vfunc_measure(_widget, _orientation, _for_size) {
@@ -83,8 +47,8 @@ const SDIFreeLayout = GObject.registerClass(
     vfunc_allocate(widget, width, height, _baseline) {
       let child = widget.get_first_child();
 
-      let cellW = 5;
-      let cellH = 5;
+      let cellW = this.cellW;
+      let cellH = this.cellH;
 
       while (child) {
         if (child instanceof SDIGlobalMenu) {
@@ -99,7 +63,6 @@ const SDIFreeLayout = GObject.registerClass(
 
         child = child.get_next_sibling();
       }
-      child = widget.get_first_child();
 
       // start with minimum spacing
       let columnSpacing = 8;
@@ -111,10 +74,15 @@ const SDIFreeLayout = GObject.registerClass(
       // w is the target tile width
       // s is the minimum spacing
       // deriving for n gives us the following results below:
-      const columns = Math.floor(
-        (width + columnSpacing) / (cellW + columnSpacing),
-      );
-      const rows = Math.floor((height + rowSpacing) / (cellH + rowSpacing));
+    const columns = Math.max(
+        1,
+        Math.floor((width + columnSpacing) / (cellW + columnSpacing))
+    );
+
+    const rows = Math.max(
+        1,
+        Math.floor((height + rowSpacing) / (cellH + rowSpacing))
+    );
       this.nRows = rows;
       this.nColumns = columns;
 
@@ -134,7 +102,58 @@ const SDIFreeLayout = GObject.registerClass(
       this.columnSpacing = columnSpacing;
       this.rowSpacing = columnSpacing;
 
-      const placeHolderLc = this.get_layout_child(this._placeHolderCell);
+      child = widget.get_first_child();
+
+      let occupancyMap = new Map();
+      const key = (row, col) => `${row},${col}`;
+
+      const place = (
+        startRow,
+        startColumn,
+        columnStep,
+        edgeColumn,
+        anchorType,
+      ) => {
+        let row = startRow;
+        let column = startColumn;
+        let placed = false;
+
+        // in this we allow overflow downwards but not upwards
+        // so we can first check for spot upwards
+        // so we can fit more cells and not waste space.
+        let rowStep = -1;
+
+        let safety = 0;
+        while (!placed) {
+          let overflow = anchorType === AnchorType.LEFT
+            ? column > columns - 1
+            : column < 0;
+          if (overflow) {
+            column = edgeColumn;
+            row += rowStep;
+
+            if (row < 0) {
+              row = startRow;
+              rowStep = 1;
+            }
+            continue;
+          }
+
+          if (occupancyMap.get(key(row, column)) === undefined) {
+            occupancyMap.set(key(row, column), "filled");
+            placed = true;
+
+            return new Gsk.Transform().translate(
+              new Graphene.Point({
+                x: column * (cellW + columnSpacing),
+                y: row * (cellH + rowSpacing),
+              }),
+            );
+          } else {
+            column += columnStep;
+          }
+        }
+      };
 
       while (child) {
         if (child === this._placeHolderCell || child instanceof SDIGlobalMenu) {
@@ -142,53 +161,35 @@ const SDIFreeLayout = GObject.registerClass(
           continue;
         }
 
-        const lc = this.get_layout_child(child);
+        const item = child.item;
 
-        let columnSpan = lc.columnSpan;
-        let rowSpan = lc.rowSpan;
-        let index = lc.index;
+        let row = item.row;
+        let column = item.column;
+        let columnSpan = item.columnSpan;
+        let rowSpan = item.rowSpan;
 
-        if (index === placeHolderLc.index) {
-          placeHolderLc.columnSpan = 0;
-          placeHolderLc.rowSpan = 0;
+        let columnStep = 1;
+        let edgeColumn = 0;
+
+        if (item.anchorType === AnchorType.RIGHT) {
+          column = (columns - 1) - column; // normalize
+          columnStep = -1;
+          edgeColumn = columns - 1;
         }
 
-        let right = child.get_next_sibling();
-        let left = child;
-
-        let column = index % columns;
-        let row = Math.floor(index / columns);
-
-        const transform = new Gsk.Transform().translate(
-          new Graphene.Point({
-            x: column * (cellW + columnSpacing),
-            y: row * (cellH + rowSpacing),
-          }),
-        );
+        let transform = place(row, column, columnStep, edgeColumn, item.anchorType);
 
         child.allocate(columnSpan * cellW, rowSpan * cellH, -1, transform);
 
         child = child.get_next_sibling();
       }
-
-      let column = placeHolderLc.index % columns;
-      let row = Math.floor(placeHolderLc.index / columns);
-      let columnSpan = placeHolderLc.columnSpan;
-      let rowSpan = placeHolderLc.rowSpan;
+      const placeholder = this._placeHolderCell;
 
       const transform = new Gsk.Transform().translate(
-        new Graphene.Point({
-          x: column * (cellW + columnSpacing),
-          y: row * (cellH + rowSpacing),
-        }),
+        new Graphene.Point({ x: 0, y: 0 }),
       );
 
-      this._placeHolderCell.allocate(
-        columnSpan * cellW,
-        rowSpan * cellH,
-        -1,
-        transform,
-      );
+      placeholder.allocate(this.cellW, this.cellH, -1, transform);
     }
   },
 );
@@ -241,12 +242,22 @@ const SDIGridCell = GObject.registerClass(
     }
 
     _onDragPrepare(_source, _x, _y) {
-      return Gdk.ContentProvider.new_for_value(this._item.uri);
+      return Gdk.ContentProvider.new_for_value(this._item);
     }
 
-    _onDragBegin(source, _drag) {
-      const paintable = Gtk.WidgetPaintable.new(this);
-      source.set_icon(paintable, 0, 0);
+    _onDragBegin(source, drag) {
+      const icon = Gtk.DragIcon.get_for_drag(drag);
+
+      const copy = new SDIGridCell();
+
+      copy.bind(this._item);
+      copy.set_size_request(65, 65);
+
+      icon.set_child(copy);
+    }
+
+    get item() {
+      return this._item;
     }
 
     bind(item) {
@@ -278,14 +289,34 @@ export const SDIFileItem = GObject.registerClass(
         "",
       ),
 
-      index: GObject.ParamSpec.int(
-        "index",
-        "Index",
-        "Grid Index",
+      row: GObject.ParamSpec.int(
+        "row",
+        "Row",
+        "Grid Row",
         GObject.ParamFlags.READWRITE,
         0,
         99999,
         0,
+      ),
+
+      column: GObject.ParamSpec.int(
+        "column",
+        "column",
+        "Grid Column",
+        GObject.ParamFlags.READWRITE,
+        0,
+        99999,
+        0,
+      ),
+
+      "anchor-type": GObject.ParamSpec.int(
+        "anchor-type",
+        "Anchor Type",
+        "Whether the cell anchors left or right",
+        GObject.ParamFlags.READWRITE,
+        0,
+        1,
+        AnchorType.LEFT,
       ),
 
       "row-span": GObject.ParamSpec.int(
@@ -370,25 +401,25 @@ export const SDIGrid = GObject.registerClass(
       return this._widgets;
     }
 
-    remove_child_by_item(item) {
-      const child = this._widgets.get(item);
+    remove_child(position) {
+      const child = this._widgets.get(position);
       if (child) {
         child.unparent();
-        this._widgets.delete(item);
+        this._widgets.delete(position);
       }
     }
 
-    add_child_by_item(item) {
+    add_child(position) {
       const cell = new SDIGridCell();
-      cell.bind(item);
+      cell.bind(this.model.get_item(position));
       cell.set_parent(this);
-      this._widgets.set(item, cell);
+      this._widgets.set(position, cell);
 
       return cell;
     }
 
-    get_child_by_item(item) {
-      const child = this._widgets.get(item);
+    get_child(position) {
+      const child = this._widgets.get(position);
       return child;
     }
 
@@ -420,19 +451,71 @@ export const SDIGrid = GObject.registerClass(
       return this.get_layout_manager().rowSpacing;
     }
 
-    get_index_for_cursor(curX, curY) {
+    get_drop_info_for_cursor(curX, curY) {
       const column = Math.floor(curX / (this.cellW + this.columnSpacing));
       const row = Math.floor(curY / (this.cellH + this.rowSpacing));
 
       const x1 = column * (this.cellW + this.columnSpacing);
       const y1 = row * (this.cellH + this.rowSpacing);
 
-      const x2 = x1 + this.cellW;
-      const y2 = y1 + this.cellH;
+      const x2 = x1 + this.cellW + this.columnSpacing;
+      const y2 = y1 + this.cellH + this.columnSpacing;
 
+      let index = null;
       if (curX >= x1 && curX <= x2 && curY >= y1 && curY <= y2)
-        return row * this.nColumns + column;
-      else return null;
+        index = row * this.nColumns + column;
+
+      const margin = this.cellW * 0.2;
+      const inCenter =
+        curX > x1 + margin &&
+        curX < x2 - margin &&
+        curY > y1 + margin &&
+        curY < y2 - margin;
+
+      // check if index is a velid tile
+      let item = null;
+      for (let i = 0; i < this.model.get_n_items(); i++) {
+        let it = this.model.get_item(i);
+        if (index == it.index) {
+          item = it;
+          break;
+        }
+      }
+
+      if (item === null) {
+        return {
+          index,
+          dropType: DropType.PLAIN_DROP,
+        };
+      }
+
+      if (this._isFolder(item.uri) === false) {
+        return {
+          index,
+          dropType: DropType.INVALID,
+        };
+      }
+
+      return {
+        index,
+        dropType: inCenter ? DropType.IN_FOLDER : DropType.IN_BETWEEN,
+      };
+    }
+
+    _isFolder(uri) {
+      try {
+        const file = Gio.File.new_for_uri(uri);
+
+        const info = file.query_info(
+          "standard::type",
+          Gio.FileQueryInfoFlags.NONE,
+          null,
+        );
+
+        return info.get_file_type() === Gio.FileType.DIRECTORY;
+      } catch (_e) {
+        return false;
+      }
     }
 
     getItemByURI(uri) {
@@ -461,10 +544,6 @@ export const SDIGrid = GObject.registerClass(
       );
       lc.columnSpan = 0;
       lc.rowSpan = 0;
-      this.queue_allocate();
-    }
-
-    vfunc_size_allocate(_width, _height, _baseline) {
       this.queue_allocate();
     }
   },

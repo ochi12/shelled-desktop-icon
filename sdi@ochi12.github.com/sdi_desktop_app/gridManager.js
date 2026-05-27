@@ -1,5 +1,5 @@
-import { Gdk, GLib, Gtk, Gio } from "./dependencies.js";
-import { SDIGrid, SDIFileItem } from "./grid.js";
+import { GObject, Gdk, GLib, Gtk, Gio } from "./dependencies.js";
+import { AnchorType, SDIGrid, SDIFileItem, DropType } from "./grid.js";
 
 let instance = null;
 
@@ -26,37 +26,16 @@ export class SDIGridManager {
     grid.add_controller(motionController);
 
     const dropTarget = Gtk.DropTarget.new(
-      String.$gtype,
+      SDIFileItem.$gtype,
       Gdk.DragAction.COPY | Gdk.DragAction.MOVE,
     );
-    dropTarget.connect("motion", (_dropTarget, x, y) => {
-      const index = grid.get_index_for_cursor(x, y);
-      if (index) grid.showPlaceHolderCell(index);
-      else grid.hidePlaceHolderCell();
+    dropTarget.preload = true;
 
-      return currentModifiers & Gdk.ModifierType.CONTROL_MASK
-        ? Gdk.DragAction.COPY
-        : Gdk.DragAction.MOVE;
-    });
+    dropTarget.connect("motion", (target, x, y) => {});
 
-    dropTarget.connect("drop", (_dropTarget, value, x, y) => {
-      grid.hidePlaceHolderCell();
-      const index = grid.get_index_for_cursor(x, y);
-      if (index !== null) {
-        const item = grid.getItemByURI(value);
-        const widget = grid.get_child_by_item(item);
-        if (item) {
-          item.index = index;
-          grid.get_layout_manager().get_layout_child(widget).index = index;
-          grid.model.sort((a, b) => a.index - b.index);
-        }
-      }
-      return true;
-    });
+    dropTarget.connect("drop", (target, value, x, y) => {});
 
-    dropTarget.connect("leave", () => {
-      grid.hidePlaceHolderCell();
-    });
+    dropTarget.connect("leave", (target, x, y) => {});
 
     grid.add_controller(dropTarget);
 
@@ -70,19 +49,12 @@ export class SDIGridManager {
 
   _onItemsChanged(model, position, removed, added) {
     for (let i = 0; i < removed; i++) {
-      const item = model.get_item(position + i);
-      this._grid.remove_child_by_item(item);
+      const child = this._grid.children.get(position + i);
+      this._grid.remove_child(position + i);
     }
 
     for (let i = 0; i < added; i++) {
-      const item = model.get_item(position + i);
-
-      const child = this._grid.add_child_by_item(item);
-
-      const lc = this._grid.get_layout_manager().get_layout_child(child);
-      lc.index = item.index;
-      lc.rowSpan = item.rowSpan;
-      lc.columnSpan = item.columnSpan;
+      this._grid.add_child(position + i);
     }
 
     this._grid.queue_allocate();
@@ -101,35 +73,44 @@ export class SDIGridManager {
 
     let info;
 
-    let index = 0;
+    let row = 0;
+    let column = 0;
 
     let a = enumerator.next_file(null);
+    let counter = 0;
     while ((info = enumerator.next_file(null))) {
       const file = enumerator.get_child(info);
 
-      this._grid.model.insert_sorted(
+      let anchor = AnchorType.LEFT;
+      if (counter > 6) anchor = AnchorType.RIGHT;
+
+      this._grid.model.append(
         new SDIFileItem({
           uri: file.get_uri(),
-          index,
+          row,
+          column,
           columnSpan: 1,
           rowSpan: 1,
+          anchorType: anchor,
         }),
-
-        (a, b) => a.index - b.index,
       );
 
-      index++;
+      column++;
+      counter++;
+      if (column > 5) {
+        column = 0;
+        row++;
+      }
     }
-
-    this._grid.model.insert_sorted(
+    this._grid.model.append(
       new SDIFileItem({
         uri: enumerator.get_child(a).get_uri(),
+        row: 3,
+        column: 0,
         columnSpan: 1,
         rowSpan: 1,
-        index: 20,
+        anchorType: AnchorType.LEFT,
       }),
-
-      (a, b) => a.index - b.index,
     );
   }
 }
