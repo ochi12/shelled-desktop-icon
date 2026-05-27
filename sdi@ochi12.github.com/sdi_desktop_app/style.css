@@ -1,5 +1,5 @@
 window.transparent-sdi-window {
-    background-color: rgba(0, 0, 0, 0.005);
+    background-color: transparent;
     padding: 3px;
 }
 
@@ -8,7 +8,7 @@ window.transparent-sdi-window {
     padding: 10px;
     border-radius: 16px;
     border: 1px solid transparent;
-    background: transparent;
+    background: transparent
     transition: 150ms ease;
 }
 .sdi-placeholder-cell{
