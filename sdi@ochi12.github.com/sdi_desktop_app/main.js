@@ -1,5 +1,3 @@
-#!/usr/bin/env -S gjs -m
-
 import Adw from "gi://Adw?version=1";
 import Gtk from "gi://Gtk?version=4.0";
 import Gdk from "gi://Gdk";
@@ -51,7 +49,7 @@ const SDIApplication = GObject.registerClass(
         Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
       );
 
-      let window = new SDIWindow({ application: this, decorated: false});
+      let window = new SDIWindow({ application: this, decorated: false });
       window.present();
     }
   },
