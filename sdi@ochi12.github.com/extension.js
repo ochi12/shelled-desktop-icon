@@ -74,8 +74,30 @@ export default class PlainExampleExtension extends Extension {
         ["gjs", "-m", scriptPath],
         Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE,
       );
-    };
 
+      const stdout = new Gio.DataInputStream({
+        base_stream: this._proc.get_stdout_pipe(),
+      });
+
+      const stderr = new Gio.DataInputStream({
+        base_stream: this._proc.get_stderr_pipe(),
+      });
+
+      const readStream = (stream, prefix) => {
+        stream.read_line_async(GLib.PRIORITY_DEFAULT, null, (stream, res) => {
+          try {
+            const [line] = stream.read_line_finish_utf8(res);
+            if (line !== null) {
+              log(`${prefix}: ${line}`);
+              readStream(stream, prefix);
+            }
+          } catch (e) {}
+        });
+      };
+
+      readStream(stdout, "STDOUT");
+      readStream(stderr, "STDERR");
+    };
     this._signals.push(
       new SignalSource(Main.layoutManager, "monitors-changed", () => {
         this._updateAppGeometry();
