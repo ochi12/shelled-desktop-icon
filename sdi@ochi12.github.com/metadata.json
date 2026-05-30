@@ -1,0 +1,15 @@
+{
+  "name": "Shelled Desktop Icon",
+  "description": "View and manage desktop folder content in your desktop background powered by gtk4/libadwaita, integrated to gnome shell seamlessly.",
+  "uuid": "sdi@ochi12.github.com",
+  "version": 1,
+  "version-name": "v0.1.0",
+  "shell-version": [
+    "45", "46", "47", "48", "49", "50"
+  ],
+  "url": "https://github.com/ochi12/shelled-desktop-icon",
+  "donations": {
+    "github": "ochi12",
+    "paypal": "kaurichannel"
+  }
+}
