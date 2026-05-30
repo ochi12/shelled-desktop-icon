@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.sdi" path="/org/gnome/shell/extensions/sdi/">
+    <key name="sdi-grid-data" type="as">
+	    <default>[]</default>
+		 <summary>Grid data</summary>
+	    <description>Stores SDI grid layout</description>
+    </key>
+  </schema>
+</schemalist>
