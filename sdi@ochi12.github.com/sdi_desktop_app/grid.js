@@ -26,6 +26,11 @@ export const AnchorType = {
 const SDIFreeLayout = GObject.registerClass(
   {
     GTypeName: "SDIFreeLayout",
+    Signals: {
+      "new-cell-data": {
+        param_types: [GObject.TYPE_JSOBJECT],
+      },
+    },
   },
   class SDIFreeLayout extends Gtk.LayoutManager {
     constructor(placeHolderCell) {
@@ -74,15 +79,15 @@ const SDIFreeLayout = GObject.registerClass(
       // w is the target tile width
       // s is the minimum spacing
       // deriving for n gives us the following results below:
-    const columns = Math.max(
+      const columns = Math.max(
         1,
-        Math.floor((width + columnSpacing) / (cellW + columnSpacing))
-    );
+        Math.floor((width + columnSpacing) / (cellW + columnSpacing)),
+      );
 
-    const rows = Math.max(
+      const rows = Math.max(
         1,
-        Math.floor((height + rowSpacing) / (cellH + rowSpacing))
-    );
+        Math.floor((height + rowSpacing) / (cellH + rowSpacing)),
+      );
       this.nRows = rows;
       this.nColumns = columns;
 
@@ -125,9 +130,8 @@ const SDIFreeLayout = GObject.registerClass(
 
         let safety = 0;
         while (!placed) {
-          let overflow = anchorType === AnchorType.LEFT
-            ? column > columns - 1
-            : column < 0;
+          let overflow =
+            anchorType === AnchorType.LEFT ? column > columns - 1 : column < 0;
           if (overflow) {
             column = edgeColumn;
             row += rowStep;
@@ -143,17 +147,15 @@ const SDIFreeLayout = GObject.registerClass(
             occupancyMap.set(key(row, column), "filled");
             placed = true;
 
-            return new Gsk.Transform().translate(
-              new Graphene.Point({
-                x: column * (cellW + columnSpacing),
-                y: row * (cellH + rowSpacing),
-              }),
-            );
+            return { row, column };
           } else {
             column += columnStep;
           }
         }
       };
+
+      const children = [];
+      const newChildren = [];
 
       while (child) {
         if (child === this._placeHolderCell || child instanceof SDIGlobalMenu) {
@@ -161,6 +163,13 @@ const SDIFreeLayout = GObject.registerClass(
           continue;
         }
 
+        if (child.item.needsLayout) newChildren.push(child);
+        else children.push(child);
+
+        child = child.get_next_sibling();
+      }
+
+      for (const child of children) {
         const item = child.item;
 
         let row = item.row;
@@ -172,17 +181,87 @@ const SDIFreeLayout = GObject.registerClass(
         let edgeColumn = 0;
 
         if (item.anchorType === AnchorType.RIGHT) {
-          column = (columns - 1) - column; // normalize
+          column = columns - 1 - column; // normalize
           columnStep = -1;
           edgeColumn = columns - 1;
         }
 
-        let transform = place(row, column, columnStep, edgeColumn, item.anchorType);
+        let gridCoord = place(
+          row,
+          column,
+          columnStep,
+          edgeColumn,
+          item.anchorType,
+        );
+
+        const transform = new Gsk.Transform().translate(
+          new Graphene.Point({
+            x: gridCoord.column * (cellW + columnSpacing),
+            y: gridCoord.row * (cellH + rowSpacing),
+          }),
+        );
+
+        child.allocate(columnSpan * cellW, rowSpan * cellH, -1, transform);
+      }
+
+      for (const child of newChildren) {
+        const item = child.item;
+
+        let row = item.row;
+        let column = item.column;
+        let columnSpan = item.columnSpan;
+        let rowSpan = item.rowSpan;
+
+        let columnStep = 1;
+        let edgeColumn = 0;
+
+        if (item.anchorType === AnchorType.RIGHT) {
+          column = columns - 1 - column; // normalize
+          columnStep = -1;
+          edgeColumn = columns - 1;
+        }
+
+        let gridCoord = place(
+          row,
+          column,
+          columnStep,
+          edgeColumn,
+          item.anchorType,
+        );
+
+        const transform = new Gsk.Transform().translate(
+          new Graphene.Point({
+            x: gridCoord.column * (cellW + columnSpacing),
+            y: gridCoord.row * (cellH + rowSpacing),
+          }),
+        );
 
         child.allocate(columnSpan * cellW, rowSpan * cellH, -1, transform);
 
-        child = child.get_next_sibling();
+        item.row = gridCoord.row;
+        item.column = columns - 1 - gridCoord.column;
+        item.needsLayout = false;
       }
+
+      if (newChildren.length > 0) {
+        this.emit(
+          "new-cell-data",
+          newChildren.map((c) => {
+            let item = c.item;
+
+            // exclude needsLayout
+            return {
+              uri: item.uri,
+              row: item.row,
+              column: item.column,
+              rowSpan: item.rowSpan,
+              columnSpan: item.columnSpan,
+              anchorType: item.anchorType,
+            };
+          }),
+        );
+      }
+
       const placeholder = this._placeHolderCell;
 
       const transform = new Gsk.Transform().translate(
@@ -260,17 +339,27 @@ const SDIGridCell = GObject.registerClass(
       return this._item;
     }
 
+    set item(item) {
+      this._item = item;
+    }
+
     bind(item) {
       const file = Gio.File.new_for_uri(item.uri);
       this._item = item;
 
       const info = file.query_info(
-        "standard::icon",
+        "standard::icon,standard::content-type",
         Gio.FileQueryInfoFlags.NONE,
         null,
       );
 
-      this._icon.gicon = info.get_icon();
+      const contentType = info.get_content_type();
+      try {
+        const texture = Gdk.Texture.new_from_file(file);
+        this._icon.set_from_paintable(texture);
+      } catch (e) {
+        this._icon.gicon = info.get_icon();
+      }
       this._label.label = file.get_basename();
     }
   },
@@ -343,6 +432,27 @@ export const SDIFileItem = GObject.registerClass(
   class SDIFileItem extends GObject.Object {
     constructor(params = {}) {
       super(params);
+      this._needsLayout = false;
+    }
+
+    get needsLayout() {
+      return this._needsLayout;
+    }
+
+    set needsLayout(setting) {
+      if (this._needsLayout === setting) return;
+      this._needsLayout = setting;
+    }
+
+    get cellData() {
+      return {
+        uri: this.uri,
+        row: this.row,
+        column: this.column,
+        rowSpan: this.rowSpan,
+        columnSpan: this.columnSpan,
+        anchorType: this.anchorType,
+      };
     }
   },
 );
